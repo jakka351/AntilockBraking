@@ -1,0 +1,36 @@
+ABSLF_I	DISABLE 	Left Front Inlet Valve State
+ABSLF_O	DISABLE 	Left Front Outlet Valve State
+ABSLR_I	DISABLE 	Left Rear Inlet Valve State
+ABSLR_O	DISABLE 	Left Rear Outlet Valve State
+ABSPMPRLY	DISABLE 	ABS Pump Motor Relay
+ABSRF_I	DISABLE 	Right Front Inlet Valve State
+ABSRF_O	DISABLE 	Right Front Outlet Valve State
+ABSRR_I	DISABLE 	Right Rear Inlet Valve State
+ABSRR_O	DISABLE 	Right Rear Outlet Valve State
+ABSR_I	Off 	ABS Rear Inlet Valve Status
+ABSR_O	Off 	ABS Rear Outlet Valve Status
+ABSVLVRLY	ENABLE 	ABS Valve Control Relay
+ABS_BYTE	204  	ABS Process Byte
+ABS_STAT	Diagnostic 	ECU Operating States
+BOO_ABS	Inactive 	Brake ON/OFF
+BRAKPRES	0.0 kPa	Brake Fluid Line Hydraulic Pressure
+CCNTABS	2  	Continuous Codes
+DISABLE_SS	No 	Disable Safety Software
+HDC_ENABLE	Inactive 	HDC Enable
+HDC_SW	Inactive 	HDC Switch Status
+Ignition	12.02 V	Ignition
+LAT_ACCL	0.00 G	ABS Lateral Acceleration Rate
+LF_WSPD	2.0 km/h	Left front wheel speed sensor
+LR_WSPD	2.0 km/h	Left rear wheel speed sensor
+PMPSTAT	Inactive 	ABS Pump Motor Status
+PRK_BRAKE	Inactive 	Parking brake Switch
+RF_WSPD	2.0 km/h	Right front wheel speed sensor
+RR_WSPD	2.0 km/h	Right rear wheel speed sensor
+STEER_ANGL	11.40 °	Steering wheel angle sensor
+TCSPRI1	Inactive 	TCS Priming Valve 1
+TCSPRI2	Inactive 	TCS Priming Valve 2
+TCSSWI1	Inactive 	TCS Switching Valve 1
+TCSSWI2	Inactive 	TCS Switching Valve 2
+TCYC_FS	Off 	Traction control system
+TCYC_SW	Up 	Traction Control Switch Status
+YAW_RATE	0 1/min	ABS Yaw Rate Value
