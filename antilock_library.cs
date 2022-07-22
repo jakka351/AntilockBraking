@@ -38,8 +38,10 @@
 # USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #################################################################################################################
 # Notes.
-#  This software can only be distributed with my written permission. It is for my own educational purposes and 
+#  1. This software can only be distributed with my written permission. It is for my own educational purposes and 
 #     is potentially dangerous to ECU health and safety. 
+#  2. 
+#   
 #################################################################################################################
 
 
@@ -47,10 +49,10 @@
 //# Antilock Brake Module     
 //#################################################################################################################
 //#ABS_SecretKey                                         = 
-//ABS_DiagSig_Rx                                        = 0x760
-//DiagSig_Rx[ABS_DiagSig_Rx]                            = (ABS_DiagSig_Rx, "1. ABS 0x760", "Antilock Brake Module")
-//ABS_DiagSig_Tx                                        = 0x768
-//DiagSig_Tx[ABS_DiagSig_Tx]                            = [ABS_DiagSig_Tx, "ABS 0x768", "Antilock Brake Module"]
+//#ABS_DiagSig_Rx                                        = 0x760
+//#DiagSig_Rx[ABS_DiagSig_Rx]                            = (ABS_DiagSig_Rx, "1. ABS 0x760", "Antilock Brake Module")
+//#ABS_DiagSig_Tx                                        = 0x768
+//#DiagSig_Tx[ABS_DiagSig_Tx]                            = [ABS_DiagSig_Tx, "ABS 0x768", "Antilock Brake Module"]
 //#################################################################################################################
 // ABS DiagSig_Rx-Tx
 #define ECU_ADDR_ABS        0x28
