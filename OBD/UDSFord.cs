@@ -1,8 +1,40 @@
 #region Copyright (c) 2016, Roland Harrison
 /* 
+ *#################################################################################################################
+ *# Copyright (c) 2022  Jack Leighton
+ *# bjakkaleighton@gmail.com // jack.leighton@au.bosch.com
+ *# All rights reserved.
+ *#################################################################################################################
+ *# Redistribution and use in source and binary forms, with or without modification, are permitted provided that
+ *# the following conditions are met:
+ *# 1.    With the express written consent of the copyright holder.
+ *# 2.    Redistributions of source code must retain the above copyright notice, this 
+ *#       list of conditions and the following disclaimer.
+ *# 3.    Redistributions in binary form must reproduce the above copyright notice, this 
+ *#       list of conditions and the following disclaimer in the documentation and/or other 
+ *#       materials provided with the distribution.
+ *# 4.    Neither the name of the organization nor the names of its contributors may be used to
+ *#       endorse or promote products derived from this software without specific prior written permission.
+ *#################################################################################################################
+ *# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES,
+ *# INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE 
+ *# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ *# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR 
+ *# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, 
+ *# WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
+ *# USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *#################################################################################################################
+ *# Notes
+ *#  1. This software can only be distributed with my written permission. It is for my own educational purposes and 
+ *#     is potentially dangerous to ECU health and safety. 
+ *#############################################################################################################
+ * 
+ * original file UDSFord.cs by:
  * Copyright (c) 2016, Roland Harrison
  * roland.c.harrison@gmail.com
  * 
+ * edited for purposes of creating an ABS config utility
+ *
  * All rights reserved.
  * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
  * Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
@@ -83,230 +115,6 @@ namespace OBD
         {
         }
 
-        public byte[] ReadFlashMemory(BackgroundWorker progressReporter = null)
-        {
-            byte[] flashMemory = new byte[0x100000];
-            byte[] buffer;
-            uint blockSize = 0x800; //This is the largest size we can request that is an even divisible number, 0x900 is supported but then we need an odd request at the end
-            for (uint i = 0x0; i <= 0xFF800; i+= blockSize)
-            {
-                ReadMemoryByAddress(i, blockSize, out buffer);
-
-                //We recieved an incorrect amount of data, there is no way to handle this error so bubble it back to the user
-                if (buffer.Length != blockSize) throw new UDSException(UDScmd.NegativeResponse.INCORRECT_MSG_LENGTH_OR_FORMAT); 
-
-                Buffer.BlockCopy(buffer, 0, flashMemory, (int)i, buffer.Length);
-
-                //Report progress back to the GUI if there is one
-                if (progressReporter != null) progressReporter.ReportProgress((int)((float)i / (float)0xFF800 * 100.0f));
-            }
-            return flashMemory;
-        }
-
-        //This is used to erase the flash
-        public void EraseFlash(BackgroundWorker progressReporter = null)
-        {
-            //Non Standard Manafacturer Specific Mode EraseFlash (Ford Spanish Oak)
-            //byte1 ServiceID 0xB1
-            //byte2 AddressAndLengthFormatIdentifier (0x00 for Ford Spanish Oak)
-            //byte3 0xB2 magic byte 1
-            //byte4 0xAA
-            byte[] txMsgBytes = { (byte)UDScmd.Mode.DIAGNOSTIC_COMMAND, 0x00, 0xB2, 0xAA };
-            SendMessage(txMsgBytes);
-
-            List<PassThruMsg> rxMsgs;
-            while (ReadMessage(out rxMsgs, 250) == J2534Err.STATUS_NOERROR)
-            {
-                if (rxMsgs[0].RxStatus == RxStatus.NONE) break;
-            }
-
-            //Expect back 0x7F B1 78  (78=Response Pending)
-            //0xF1 00 B2  which is success
-
-            //If we couldn't find the start of the mesage give up
-            if (J2534Status != J2534Err.STATUS_NOERROR) throw new J2534Exception(J2534Status);
-            if (rxMsgs.Count < 1) throw new J2534Exception(J2534Err.ERR_INVALID_MSG);
-
-            UDSPacket rxPacket = ParseUDSResponse(rxMsgs[0], UDScmd.Mode.DIAGNOSTIC_COMMAND);
-            if (rxPacket.Response != UDScmd.Response.POSTIVE_RESPONSE)
-            {
-                //We expect a negative response but with response pending
-                if (rxPacket.NegativeResponse != UDScmd.NegativeResponse.REPONSE_PENDING)
-                {
-                    throw new UDSException(rxPacket.NegativeResponse);
-                }
-
-                //Wait for the PCM to erase the flash
-                ReadMessage(out rxMsgs, 15000);
-
-                //If we couldn't find the start of the mesage give up
-                if (J2534Status != J2534Err.STATUS_NOERROR) throw new J2534Exception(J2534Status);
-                if (rxMsgs.Count < 1) throw new J2534Exception(J2534Err.ERR_INVALID_MSG);
-
-                rxPacket = ParseUDSResponse(rxMsgs[0], UDScmd.Mode.DIAGNOSTIC_COMMAND);
-                if (rxPacket.Response != UDScmd.Response.POSTIVE_RESPONSE) throw new UDSException(rxPacket.NegativeResponse);
-            }
-
-            if (rxPacket.Payload.Length < 2) throw new J2534Exception(J2534Err.ERR_INVALID_MSG);
-
-            //There is no IS14229 spec for this command so we manually check it
-            if (rxPacket.Payload[0] != 0x00 || rxPacket.Payload[1] != 0xB2) throw new J2534Exception(J2534Err.ERR_INVALID_MSG);
-        }
-
-        public void WriteFlash(byte [] data, BackgroundWorker progressReporter = null)
-        {
-            if (data.Length < 100000) return;
-            int i;
-            var blocksize = 0x400;
-            for (i = 0x10000; i <= 0xFFC00; i += blocksize)
-            {
-                TransferData(data, i, blocksize);
-                
-                if (progressReporter != null) progressReporter.ReportProgress((int)((float)i / (float)0xFFC00 * 100.0f));
-            }
-        }
-
-        public void RequestTransferExit()
-        {
-
-            //ISO14229 RequestTransferExit
-            //byte1 ServiceID 0x37
-
-            byte[] txMsgBytes = {(byte)UDScmd.Mode.TRANSFER_EXIT };
-            SendMessage(txMsgBytes);
-
-            //We expect no reply
-            List<PassThruMsg> rxMsgs;
-
-            //This will throw an exception if we don't get a valid reply
-            while (ReadMessage(out rxMsgs, 250) == J2534Err.STATUS_NOERROR)
-            {
-                if (rxMsgs[0].RxStatus == RxStatus.NONE) break;
-            }
-
-            //If we couldn't find the start of the mesage give up
-            if (J2534Status != J2534Err.STATUS_NOERROR) throw new J2534Exception(J2534Status);
-            if (rxMsgs.Count < 1) throw new J2534Exception(J2534Err.ERR_INVALID_MSG);
-
-            UDSPacket rxPacket = ParseUDSResponse(rxMsgs[0], UDScmd.Mode.TRANSFER_EXIT);
-            var b = rxMsgs[0].GetBytes();
-            if (rxPacket.Response != UDScmd.Response.POSTIVE_RESPONSE)
-            {
-                //We expect a negative response but with response pending
-                if (rxPacket.NegativeResponse != UDScmd.NegativeResponse.REPONSE_PENDING) throw new UDSException(rxPacket.NegativeResponse);
-            }
-        }
-
-        public void TransferData(byte [] data, int offset, int length, int blockSize = -1)
-        {
-            //ISO14229 TransferData
-            //byte1 ServiceID 0x36
-            if (blockSize == -1) blockSize = length;
-
-            byte[] txMsgBytes = new byte[(length + 1)];
-            txMsgBytes[0] = (byte)UDScmd.Mode.TRANSFER_DATA;
-            Buffer.BlockCopy(data, offset, txMsgBytes, 1, blockSize);
-            SendMessage(txMsgBytes);
-
-
-            //We expect no reply
-            List<PassThruMsg> rxMsgs;
-            List<byte[]> msgs = new List<byte[]>();
-            //This will throw an exception if we don't get a valid reply
-            while (ReadMessage(out rxMsgs, 250) == J2534Err.STATUS_NOERROR)
-            {
-                if (rxMsgs[0].RxStatus == RxStatus.NONE) break;
-                msgs.Add(rxMsgs[0].GetBytes());
-            }
-
-            //If we couldn't find the start of the mesage give up
-            if (J2534Status != J2534Err.STATUS_NOERROR) throw new J2534Exception(J2534Status);
-            if (rxMsgs.Count < 1) throw new J2534Exception(J2534Err.ERR_INVALID_MSG);
-
-            UDSPacket rxPacket = ParseUDSResponse(rxMsgs[0], UDScmd.Mode.TRANSFER_DATA);
-            var b = rxMsgs[0].GetBytes();
-            msgs.Add(b);
-            if (rxPacket.Response != UDScmd.Response.POSTIVE_RESPONSE)
-            {
-                while(rxPacket.NegativeResponse == UDScmd.NegativeResponse.REPONSE_PENDING)
-                {
-                    ReadMessage(out rxMsgs, 250);
-                    if (J2534Status != J2534Err.STATUS_NOERROR) throw new J2534Exception(J2534Status);
-                    if (rxMsgs.Count < 1) throw new J2534Exception(J2534Err.ERR_INVALID_MSG);
-                    rxPacket = ParseUDSResponse(rxMsgs[0], UDScmd.Mode.TRANSFER_DATA);
-                    msgs.Add(rxMsgs[0].GetBytes());
-                }
-
-                //If we get a different negative response code then this is an actual error
-                if (rxPacket.Response != UDScmd.Response.POSTIVE_RESPONSE)
-                {
-                    throw new UDSException(rxPacket.NegativeResponse);
-                }
-            }
-        }
-
-        public void RequestDownload()
-        {
-            //ISO14229 RequestDownload
-            //byte1 ServiceID 0x34
-            //byte2 DataFormatIdentifier 
-            //      High nibble = memorySize)
-            //      Low nibble  = memoryAddress
-            //byte3 AddressAndLengthFormatIdentifier (0x01 for Ford Spanish Oak)
-            //byte4 memoryAddressByte1
-            //byte5 memoryAddressByte2
-            //byte6 memoryAddressByte3
-            //byte7 uncompressedMemorySizeByte1
-            //byte8 uncompressedMemorySizeByte1
-            //byte9 uncompressedMemorySizeByte1
-
-            //We need to do something more clever here based upon the flash size
-            byte[] txMsgBytes = { (byte)UDScmd.Mode.REQUEST_DOWNLOAD, 0x00, 0x01, 0x00,00,00,0x0F,0x00,00};
-            SendMessage(txMsgBytes);
-
-            //We expect 3 messages, rx, start of message, 0x78 (response pending) then the successful response
-            List<PassThruMsg> rxMsgs;
-
-            //This will throw an exception if we don't get a valid reply
-            while (ReadMessage(out rxMsgs, 250) == J2534Err.STATUS_NOERROR)
-            {
-                if (rxMsgs[0].RxStatus == RxStatus.NONE) break;
-            }
-
-            //If we couldn't find the start of the mesage give up
-            if (J2534Status != J2534Err.STATUS_NOERROR) throw new J2534Exception(J2534Status);
-            if (rxMsgs.Count < 1) throw new J2534Exception(J2534Err.ERR_INVALID_MSG);
-
-            UDSPacket rxPacket = ParseUDSResponse(rxMsgs[0], UDScmd.Mode.REQUEST_DOWNLOAD);
-            if (rxPacket.Response != UDScmd.Response.POSTIVE_RESPONSE)
-            {
-                //We expect a negative response but with response pending
-                if (rxPacket.NegativeResponse != UDScmd.NegativeResponse.REPONSE_PENDING) throw new UDSException(rxPacket.NegativeResponse);
-
-                //ReadMessage(out rxMsgs, 250);
-                List<byte[]> temp = new List<byte[]>();
-                while (ReadMessage(out rxMsgs, 250) == J2534Err.STATUS_NOERROR)
-                {
-                    var b = rxMsgs[0].GetBytes();
-                    temp.Add(b);
-                    if (rxMsgs[0].RxStatus == RxStatus.NONE) break;
-                }
-
-                //If we couldn't find the start of the mesage give up
-                if (J2534Status != J2534Err.STATUS_NOERROR) throw new J2534Exception(J2534Status);
-                if (rxMsgs.Count < 1) throw new J2534Exception(J2534Err.ERR_INVALID_MSG);
-
-                rxPacket = ParseUDSResponse(rxMsgs[0], UDScmd.Mode.REQUEST_DOWNLOAD);
-                if (rxPacket.Response != UDScmd.Response.POSTIVE_RESPONSE) throw new UDSException(rxPacket.NegativeResponse);
-
-            }
-
-            //We have a positive response lets check the payload
-            //This reply from the spanish oak doesn't really seem to match the ISO14229 spec however it must be in this format so we fail if it is not
-            if (rxPacket.LengthFormatIdentifier != 0x04 || rxPacket.MaxNumberOfBlockLength != 0x01) throw new UDSException(UDScmd.NegativeResponse.UPLOAD_DOWNLOAD_NOT_ACCEPTED);
-
-        }
-
         public void ReadMemoryByAddress(uint address, uint blockSize, out byte[] memory)
         {
             //Send the read memory request
@@ -357,162 +165,7 @@ namespace OBD
             }
         }
 
-        public void SecurityAccess(byte subFunction)
-        {
-            //Send the security request
-            byte[] txMsgBytes = {(byte)UDScmd.Mode.SECURITY_ACCESS, subFunction};
-            SendMessage(txMsgBytes);
-
-            //Attempt to read at least 1 message as a reply
-            List<PassThruMsg> rxMsgs;
-            ReadAllMessages(out rxMsgs,1, 200);
-
-            //Find the start of the response and parse it.
-            PassThruMsg seedKeyResponse;
-            int startOfMessageIndex = GetStartOfMessageIndex(rxMsgs);
-
-            if (startOfMessageIndex == -1) throw new J2534Exception(J2534Err.ERR_BUFFER_EMPTY);
-            seedKeyResponse = rxMsgs[startOfMessageIndex];
-
-            //needs to respond with 00 00 07 e8 67 03 xx xx xx
-            //response is 00 00 7F 27 12 if you have just powered on and had VPP during power on but the command is incorrect length (unsupported)
-            //response is 00 00 7F 27 11 if you have no VPP 
-            //response is 00 07 E8 67 mode XX XX XX if success
-            UDSPacket rxPacket = ParseUDSResponse(seedKeyResponse, UDScmd.Mode.SECURITY_ACCESS);
-            if (rxPacket.Response == UDScmd.Response.NO_RESPONSE)
-            {
-                throw new UDSException(UDScmd.NegativeResponse.INCORRECT_MSG_LENGTH_OR_FORMAT);
-            }
-            else if (rxPacket.Response == UDScmd.Response.NEGATIVE_RESPONSE)
-            { 
-                //Inform the user of the error
-                if(rxPacket.NegativeResponse == UDScmd.NegativeResponse.UNKNOWN)
-                {
-                    //no error code supplied, something else went wrong
-                    throw new UDSException(UDScmd.NegativeResponse.INCORRECT_MSG_LENGTH_OR_FORMAT);
-                }
-                else
-                {
-                    //We got a sub function error code
-                    throw new UDSException(rxPacket.NegativeResponse);
-                }
-            }
-            else
-            {
-                if (rxPacket.Payload.Length < 3)
-                {
-                    //Incorrect seed response length
-                    throw new UDSException(UDScmd.NegativeResponse.INCORRECT_MSG_LENGTH_OR_FORMAT);
-                }
-                else
-                {
-                    //Calculate the seed response
-                    var seedresponse = CalculateResponseFromSeed(0x7E0, subFunction, rxPacket.Payload);
-
-                    //Send the packet
-                    txMsgBytes = new byte[] { (byte)UDScmd.Mode.SECURITY_ACCESS, (byte)(subFunction + 1), (byte)((seedresponse >> 16) & 0xFF), (byte)((seedresponse >> 8) & 0xFF), (byte)((seedresponse) & 0xFF) };
-                    SendMessage(txMsgBytes);
-
-                    //Attempt to read at least 1 message as a reply
-                    ReadAllMessages(out rxMsgs,1,200);
-
-                    //Get the response
-                    startOfMessageIndex = GetStartOfMessageIndex(rxMsgs);
-                    if (startOfMessageIndex == -1) throw new J2534Exception(J2534Err.ERR_BUFFER_EMPTY);
-
-                    var unlockResponse = rxMsgs[startOfMessageIndex];
-                    //needs to be 00 00 07 E8 67 04 (mode+1)  (or 67 02)
-
-                    rxPacket = ParseUDSResponse(unlockResponse, UDScmd.Mode.SECURITY_ACCESS);
-                    if (rxPacket.Response == UDScmd.Response.NO_RESPONSE)
-                    {
-                        throw new UDSException(UDScmd.NegativeResponse.INCORRECT_MSG_LENGTH_OR_FORMAT);
-                    }
-                    else if (rxPacket.Response == UDScmd.Response.NEGATIVE_RESPONSE)
-                    {
-                        //Inform the user of the error
-                        if (rxPacket.NegativeResponse == UDScmd.NegativeResponse.UNKNOWN)
-                        {
-                            //no error code supplied, something else went wrong
-                            throw new UDSException(UDScmd.NegativeResponse.INCORRECT_MSG_LENGTH_OR_FORMAT);
-                        }
-                        else
-                        {
-                            //We got a sub function error code
-                            throw new UDSException(rxPacket.NegativeResponse);
-                        }
-                    }
-
-                    if(rxPacket.SubFunction != subFunction + 1)
-                    {
-                        throw new Exception($"Returned an incorrect subfunction code, expected {subFunction+1} got {rxPacket.SubFunction}");
-                    }
-
-                    //We successfully entered the serurity level!
-
-                }
-            }
-
-        }
-
-        /// <summary>
-        /// This routine was developed from "FordStuff.py" written by Chris Valasek and Charlie Miller
-        /// See "Adventures in Automotive Networks and Control Units" for the full technical paper
-        /// </summary>
-        /// <param name="seedbyte1"></param>
-        /// <param name="seedbyte2"></param>
-        /// <param name="seedbyte3"></param>
-        /// <returns></returns>
-        private static int CalculateResponseFromSeed(int device, int mode, byte[] seedbytes)
-        {
-            int seed = (seedbytes[0] << 16) | (seedbytes[1] << 8) | seedbytes[2];
-
-            byte[] secretKey;
-            if (mode == 1)
-            {
-                if (SecretKeysLevel1.TryGetValue(device, out secretKey)) return GenerateSeedKeyResponse(seed, secretKey);
-            }
-            else
-            {
-                if (SecretKeysLevel2.TryGetValue(device, out secretKey)) return GenerateSeedKeyResponse(seed, secretKey);
-            }
-
-            return -1;
-        }
-
-        private static int GenerateSeedKeyResponse(int seed_int, byte[] secretKey)
-        {
-            byte s1 = secretKey[0];
-            byte s2 = secretKey[1];
-            byte s3 = secretKey[2];
-            byte s4 = secretKey[3];
-            byte s5 = secretKey[4];
-            int mucked_value = 0xc541a9;
-
-            int or_ed_seed = ((seed_int & 0xFF0000) >> 16) | (seed_int & 0xFF00) | (s1 << 24) | (seed_int & 0xff) << 16;
-
-            int v8, v9, v10, v11, v12, v13, v14;
-            for (int i = 0; i < 32; i++)
-            {
-                int a_bit = ((or_ed_seed >> i) & 1 ^ mucked_value & 1) << 23;
-                v9 = v10 = v8 = a_bit | (mucked_value >> 1);
-                mucked_value = v10 & 0xEF6FD7 | ((((v9 & 0x100000) >> 20) ^ ((v8 & 0x800000) >> 23)) << 20) | (((((mucked_value >> 1) & 0x8000) >> 15) ^ ((v8 & 0x800000) >> 23)) << 15) | (((((mucked_value >> 1) & 0x1000) >> 12) ^ ((v8 & 0x800000) >> 23)) << 12) | 32 * ((((mucked_value >> 1) & 0x20) >> 5) ^ ((v8 & 0x800000) >> 23)) | 8 * ((((mucked_value >> 1) & 8) >> 3) ^ ((v8 & 0x800000) >> 23));
-            }
-
-            for (int j = 0; j < 32; j++)
-            {
-                v11 = ((((s5 << 24) | (s4 << 16) | s2 | (s3 << 8)) >> j) & 1 ^ mucked_value & 1) << 23;
-                v12 = v11 | (mucked_value >> 1);
-                v13 = v11 | (mucked_value >> 1);
-                v14 = v11 | (mucked_value >> 1);
-                mucked_value = v14 & 0xEF6FD7 | ((((v13 & 0x100000) >> 20) ^ ((v12 & 0x800000) >> 23)) << 20) | (((((mucked_value >> 1) & 0x8000) >> 15) ^ ((v12 & 0x800000) >> 23)) << 15) | (((((mucked_value >> 1) & 0x1000) >> 12) ^ ((v12 & 0x800000) >> 23)) << 12) | 32 * ((((mucked_value >> 1) & 0x20) >> 5) ^ ((v12 & 0x800000) >> 23)) | 8 * ((((mucked_value >> 1) & 8) >> 3) ^ ((v12 & 0x800000) >> 23));
-            }
-
-            int key = ((mucked_value & 0xF0000) >> 16) | 16 * (mucked_value & 0xF) | ((((mucked_value & 0xF00000) >> 20) | ((mucked_value & 0xF000) >> 8)) << 8) | ((mucked_value & 0xFF0) >> 4 << 16);
-
-            return key;
-        }
-
+        
         public void ECUReset(byte[] command)
         {
             throw new NotImplementedException();
@@ -564,28 +217,45 @@ namespace OBD
 
         public void readDataByLocalID(byte[] command)
         {
+            // send requestResponse testerPresent message to abs ecu
+            byte[] txMsgBytes = {(byte)UDScmd.Mode.READ_DATA_BY_LOCAL_ID, subFunction};
+            SendMessage(txMsgBytes);
+
+            // attempt to read at least 1 message as a reply
+            List<PassThruMsg> rxMsgs;
+            ReadAllMessages(out rxMsgs,1, 200);
 
         }
 
         public void readMemoryByCommonID(byte[] command)
         {
+            // send requestResponse testerPresent message to abs ecu
+            byte[] txMsgBytes = {(byte)UDScmd.Mode.READ_DATA_BY_INDENTIFIER, subFunction};
+            SendMessage(txMsgBytes);
+
+            // attempt to read at least 1 message as a reply
+            List<PassThruMsg> rxMsgs;
+            ReadAllMessages(out rxMsgs,1, 200);
 
         }
 
-        public void startRoutineByLocalIdentifie(byte[] command)
+        public void startRoutineByLocalIdentifier(byte[] command)
         {
+            throw new NotImplementedException();
 
         }
         //startRoutineByLocalIdentifier                         = 0x31    
  
         public void stopRoutineByLocalIdentifier(byte[] command)
         {
+            throw new NotImplementedException();
 
         }
         //stopRoutineByLocalIdentifier                          = 0x32
 
         public void requestRoutineResultsByLocalID(byte[] command)
         {
+            throw new NotImplementedException();
 
         }
         //requestRoutineResultsByLocalID                        = 0x33
@@ -595,14 +265,15 @@ namespace OBD
 
         }
 
-
-        public void RequestUpload()
+        public void testerPresent(byte[] subFunction)
         {
-            throw new NotImplementedException();
-        }
+            // send requestResponse testerPresent message to abs ecu
+            byte[] txMsgBytes = {(byte)UDScmd.Mode.TESTER_PRESENT, subFunction};
+            SendMessage(txMsgBytes);
 
-        public void testerPresent(byte[] command)
-        {
+            // attempt to read at least 1 message as a reply
+            List<PassThruMsg> rxMsgs;
+            ReadAllMessages(out rxMsgs,1, 200);
 
         }
 
@@ -645,6 +316,12 @@ namespace OBD
         /// <param name="txMode"></param>
         /// <param name="payload"></param>
         /// <returns></returns>
+
+        //public void AsBuiltCheckSumGenerator()
+        //{
+        //necessary?
+        //}
+        
         UDSPacket ParseUDSResponse(PassThruMsg rxMsg, UDScmd.Mode txMode)
         {
             var rxMsgBytes = rxMsg.GetBytes();
@@ -762,7 +439,8 @@ namespace OBD
                 }
             }
         }
-
+        // checksum dictionary or generator? there is only going to be static checksums for the first block, and 
+        // second block the checksums stay the same for each module config option
         private static readonly Dictionary<int, byte[]> SecretKeysLevel1 = new Dictionary<int, byte[]>
         {
             {0x726, new byte[]{0x3F,0x9E,0x78,0xC5,0x96}},
@@ -792,6 +470,7 @@ namespace OBD
             CLEAR_DIAGNOSTIC_INFORMATION = 0x14,
             READ_DTC_BY_STATUS = 0x18,
             READ_DTC_INFORMATION = 0x19,
+            READ_DATA_BY_LOCAL_ID = 0x21,
             READ_DATA_BY_INDENTIFIER = 0x22,
             READ_MEMORY_BY_ADDRESS = 0x23,
             SECURITY_ACCESS = 0x27,
@@ -799,14 +478,22 @@ namespace OBD
             WRITE_DATA_BY_IDENTIFIER = 0x2E,
             IO_CONTROL_BY_IDENTIFIER = 0x2F,
             ROUTINE_CONTROL = 0x31,
+            ROUTINE_CONTROL_STOP = 0x32,
+            REQUEST_ROUTINE_RESULTS = 0x33,   
             REQUEST_DOWNLOAD = 0x34,
             REQUEST_UPLOAD = 0x35,
             TRANSFER_DATA = 0X36,
             TRANSFER_EXIT = 0X37,
+            WRITE_DATA_BY_LOCAL_ID = 0x3B,
             WRITE_MEMORY_BY_ADDRESS = 0X3D,
             TESTER_PRESENT = 0X3E,
             CONTROL_DTC_SETTING = 0X85,
+            REQUEST_DIAGNOSTIC_DATA_PACKET = 0xA0,
+            DYNAMICALLY_DEFINE_DIAGNOSTIC_DATA_PACKET = 0xA1,
+            NO_STORED_CODES_LOGGING_STATE_ENTRY = 0xB0,
             DIAGNOSTIC_COMMAND = 0xB1,
+            INPUT_INTEGRITY_TEST_STATE_ENTRY = 0xB2,
+            REQUEST_MANUFACTURER_STATE_ENTRY = 0xB4,
             UNKNOWN = 0xFF,
         }
 
@@ -814,7 +501,17 @@ namespace OBD
         {
             NO_RESPONSE = 0,
             POSTIVE_RESPONSE = 0x40,
-            NEGATIVE_RESPONSE = 0x7F
+            NEGATIVE_RESPONSE = 0x7F,
+            REPORT_DIAGNOSTIC_STATE = 0x50,
+            REPORT_DTC STATUS = 0x58,
+            REPORT_DATA_BY_LOCAL_ID = 0x61,
+            REPORT_DATA_BY_IDENTIFIER = 0x62,
+            REPORT_SELFTEST_COMMENCED = 0x71,
+            REPORT_ROUTINE_RESULT = 0x73,
+            SUCCESFUL_WRITE_DATA_BY_LOCAL_ID = 0x7B,
+            REPORT_RESPONSE_TESTER_PRESENT = 0x7E,
+            REPORT_DTC_SETTING = 0xC5,
+            REPORT_DIAGNOSTIC_COMMAND = 0xF1,
         }
 
         public enum NegativeResponse : byte
@@ -858,9 +555,151 @@ namespace OBD
             SHIFTER_LEVER_NOT_IN_PARK = 0x90,
             TORQUE_CONVERTER_CLUTCH_LOCKED = 0x91,
             VOLTAGE_TOO_HIGH = 0x92,
-            VOLTAGE_TOO_LOW = 0x93,
-
+            VOLTAGE_TOO_LOW = 0x93,         
+            ////CAN GENERIC DIAGNOSTIC SPECIFICATION V2003 Negative Response Codes
+            //#define  generalReject                            0x10
+            //#define  serviceNotSupported                      0x11
+            //#define  subFunctionNotSupported                  0x12
+            //#define  responseTooLong                          0x14
+            //#define  busyRepeatRequest                        0x21
+            //#define  conditionsNotCorrect                     0x22
+            //#define  requestSequenceError                     0x24
+            //#define  requestOutOfRange                        0x31
+            //#define  securityAccessDenied                     0x33
+            //#define  invalidKey                               0x35
+            //#define  exceedNumberOfAttempts                   0x36
+            //#define  requiredTimeDelayNotExpired              0x37
+            //#define  uploadDownloadNotAccepted                0x70
+            //#define  generalProgrammingFailure                0x72
+            //#define  requestCorrectlyReceived_ResponsePending 0x78
+            //#define  subFuncionNotSupportedInActiveSession    0x7E
+            //#define  serviceNotSupportedInActiveSession       0x7F
+            //#define  rpmTooHigh                               0x81
+            //#define  rpmTooLow                                0x82
+            //#define  engineIsRunning                          0x83
+            //#define  engineIsNotRunning                       0x84
+            //#define  shifterLeverNotInPark                    0x90
             UNKNOWN = 0xFF,
+        
+
+        }
+        
+
+        public enum ABSDataIdentifiers : byte
+        {
+            ABSLF_I = 0x00,
+            ABSLF_O = 0x00,
+            ABSLR_I = 0x00,
+            ABSLR_O = 0x00,
+            ABSPMPRLY = 0x00,
+            ABSRF_I = 0x00,
+            ABSRF_O = 0x00,
+            ABSRR_I = 0x00,
+            ABSRR_O = 0x00,
+            ABSR_I = 0x00,
+            ABSR_O = 0x00,
+            ABSVLVRLY = 0x00,
+            ABS_BYTE = 0x00,
+            ABS_STAT = 0x00,
+            BOO_ABS = 0x00,
+            BRAKPRES = 0x00,
+            CCNTABS = 0x00,
+            DISABLE_SS = 0x00,
+            HDC_ENABLE = 0x00,
+            HDC_SW = 0x00,
+            Ignition = 0x00,
+            LAT_ACCL = 0x00,
+            LF_WSPD = 0x00,
+            LR_WSPD = 0x00,
+            PMPSTAT = 0x00,
+            PRK_BRAKE = 0x00,
+            RF_WSPD = 0x00,
+            RR_WSPD = 0x00,
+            STEER_ANGL = 0x00,
+            TCSPRI1 = 0x00,
+            TCSPRI2 = 0x00,
+            TCSSWI1 = 0x00,
+            TCSSWI2 = 0x00,
+            TCYC_FS = 0x00,
+            TCYC_SW = 0x00,
+            YAW_RATE = 0x00,
+        }
+
+        public enum ABSConfigOption : byte
+        {
+            XTG1G2SportIRS            =  0x100401, // 1049601
+            XTSportIRS                =  0x100501, // 1049857
+            GTurbo                    =  0x100601, // 1050113
+            G6SedanDLPGXTG6G6ESport   =  0x110401, // 1115137
+            PoliceSedanDLPGXTSport    =  0x110501, // 1115993
+            UteDLPGREBXR612t          =  0x120402, // 1180674
+            F6PursultUTE12t4pot       =  0x140102, // 1310978
+            F6PursultUTE12t6pot       =  0x140202, // 1311234
+            XT                        =  0x160401, // 1442817
+            G6SedanDLPGXTStd          =  0x170401, // 1508953
+            UteI6RDLPGXL34t           =  0x180402, // 1573890
+            F6Force64potBrakes        =  0x190101, // 1638657
+            F6Force66potBrakes        =  0x190201, // 1638913
+            XR6                       =  0x190401, // 1639425
+            XR6Turbo                  =  0x190601, // 1639937
+            XR6TurboPolice            =  0x190701, // 1640193
+            GTForce4pOtBrakes         =  0x200101, // 2097409
+            GTGTPForces6potBrakes     =  0x200201, // 2097665
+            XR8                       =  0x200601, // 2098689
+            XR8Police                 =  0x200701, // 2098945
+            UteI67DLPG1t              =  0x210402, // 2163714
+            UteI6                     =  0x220402, // 2229250
+            G6SedanDLPGXTHDSus        =  0x230401, // 2294785
+            XTPoliceHDFrontSusandIRS  =  0x230501, // 2295041
+            XTHDFrontSusandIRS        =  0x230401, // 229478
+        }
+
+        public enum AsBuiltConfiguration : byte
+        {
+            BLOCK1LINE1 = 0xFFFFFFFFFF,
+            BLOCK1LINE2 = 0xFFFFFFFFFF,
+            BLOCK1LINE3 = 0xFFFFFFFFFF,
+            BLOCK1LINE3 = 0xFFFF,
+            BLOCK2LINE1 = ABSConfigOption,
+        }
+
+        public enum ABSConfigSum : byte
+        {
+            XTG1G2SportIRS            =  0x    100401, // 1049601
+            XTSportIRS                =  0x    100501, // 1049857
+            GTurbo                    =  0x    100601, // 1050113
+            G6SedanDLPGXTG6G6ESport   =  0x    110401, // 1115137
+            PoliceSedanDLPGXTSport    =  0x    110501, // 1115993
+            UteDLPGREBXR612t          =  0x    120402, // 1180674
+            F6PursultUTE12t4pot       =  0x    140102, // 1310978
+            F6PursultUTE12t6pot       =  0x    140202, // 1311234
+            XT                        =  0x    160401, // 1442817
+            G6SedanDLPGXTStd          =  0x    170401, // 1508953
+            UteI6RDLPGXL34t           =  0x    180402, // 1573890
+            F6Force64potBrakes        =  0x    190101, // 1638657
+            F6Force66potBrakes        =  0x    190201, // 1638913
+            XR6                       =  0x    190401, // 1639425
+            XR6Turbo                  =  0x    190601, // 1639937
+            XR6TurboPolice            =  0x    190701, // 1640193
+            GTForce4pOtBrakes         =  0x    200101, // 2097409
+            GTGTPForces6potBrakes     =  0x    200201, // 2097665
+            XR8                       =  0x91    200601, // 2098689
+            XR8Police                 =  0x92    200701, // 2098945
+            UteI67DLPG1t              =  0x    210402, // 2163714
+            UteI6                     =  0x    220402, // 2229250
+            G6SedanDLPGXTHDSus        =  0x    230401, // 2294785
+            XTPoliceHDFrontSusandIRS  =  0x230501, // 2295041
+            XTHDFrontSusandIRS        =  0x230401, // 229478
+        }
+        public enum AsBuiltChecksum : byte
+        {
+            BLOCK1LINE1SUM = 0x64,
+            BLOCK1LINE2SUM = 0x65,
+            BLOCK1LINE3SUM = 0x66,
+            BLOCK1LINE4SUM = 0x6A,
+            BLOCK2LINE1SUM = ABSConfigOptionSum,
+        
+
         }
         public enum DTCStatusByte : byte
         {
@@ -876,3 +715,192 @@ namespace OBD
 
     }
 }
+//#################################################################################################################
+//# Antilock Brake Module     
+//#################################################################################################################
+//#ABS_SecretKey                                         = 
+//#ABS_DiagSig_Rx                                        = 0x760
+//#DiagSig_Rx[ABS_DiagSig_Rx]                            = (ABS_DiagSig_Rx, "1. ABS 0x760", "Antilock Brake Module")
+//#ABS_DiagSig_Tx                                        = 0x768
+//#DiagSig_Tx[ABS_DiagSig_Tx]                            = [ABS_DiagSig_Tx, "ABS 0x768", "Antilock Brake Module"]
+//#################################################################################################################
+// ABS DiagSig_Rx-Tx
+#define ECU_ADDR_ABS        0x28
+#define ECU_ADDR_ABSB       0x3D
+#define DIAG_SIG_RX_ABS     0x760
+#define DIAG_SIG_TX_ABS     0x768
+#define DIAG_SIG_RX_ABSB    0x7F2
+#define DIAG_SIG_TX_ABSB    0x7FA
+#define RAPID_DATA_ABS1     0x6B0
+#define RAPID_DATA_ABS2     0x6B1
+#define FNOS_ID_ABS1        0x516
+#define FNOS_ID_ABS2        0x596
+
+
+// GMRDB 2008 ABS Data Identifiers
+#define BrakeActuatorStatus 0x2059  
+#define BrakeApplicationCounter 0x2860  
+#define BrakeBoosterMembraneDisplacementSensor 0x2822  
+#define BrakeBoosterPressureMeasured 0x2028
+#define BrakeBoosterPressureControlVacuumManagementStatus 0x2874  
+#define BrakeBoosterPressureExpressedAsVacuumBPAPCorrected 0x  2872
+#define BrakeBoosterPressureExpressedAsVacuumBPAPMeasuredAdjustedAndFilteredAndBeforeFMEMSubstitution 0x2873  
+#define BrakeBoosterPressureSensorVoltage 0x2029
+#define BrakeBoosterVacuumTarget 0x280C
+#define BrakeControlSystemMode 0x284C
+#define BrakeDiscTemperatureInferred 0x2847  
+#define BrakeEventCounters 0x2881
+#define BrakeFluidLevelSensorStatus 0x2839  
+#define BrakeFluidLineHydraulicPressure 0x2B0D  
+#define BrakeFluidLineHydraulicPressureCorrected 0x2034  
+#define BrakeFluidLineHydraulicPressureCorrected 0x280A  
+#define BrakeFluidLineHydraulicPressureSensorVoltage 0x2809  
+#define BrakeForceSensor 0x2B10
+#define BrakeInputSwitchStatus 0x2B00  
+#define BrakeLightActivationStatus 0x2B1E  
+#define BrakeLightSwitchActiveToBrakeTorqueMeasuredDelay 0x417B  
+#define BrakeLightSwitchtoBrakePressureMeasuredDelay 0x404A
+#define BrakeLiningWearSensorFeedback 0xC196
+#define BrakeModuleRequestsVacuumFromCombustionEngine 0x483C  
+#define BrakeOnOffBOOSwitchOutput 0x42DF
+#define BrakeOverrideAcceleratorFunctionActivityMetrics 0x0590  
+#define BrakePedalAngleSensorBInputMeasured 0x2013
+#define BrakePedalAngleSensorInputMeasured 0x2012 
+#define BrakePedalPosition 0x2B35
+#define BrakePedalPositionMeasured 0x2823  
+#define BrakePedalPositionBMeasured 0x2824
+#define BrakePedalPositionSensorA 0x2096
+#define BrakePedalPositionSensorB 0x208D
+#define BrakePedalPositionSensorB 0x2097
+#define BrakePedalTorqueDetectionLevel 0x417A  
+#define BrakePower1Current 0x4328
+#define BrakePower1Current 0x432A
+#define BrakePower2Current 0x4327
+#define BrakePower2Current 0x4329
+#define BrakePressureDetectionLevel 0x404E  
+#define BrakePullReductionActivationCounter 0x205B  
+#define BrakeStatus 0xD120
+#define BrakeSwitchBToBrakePressureMeasuredDelay 0x404D  
+#define BrakeSystemPressureOffsetCorrected 0x2058
+#define BrakeSystemStatus 0x7217
+#define HillDescentControlIndicatorLightCommandedState 0x283A   
+#define HillStartAssistActivationThreshold 0x2861   
+#define LeftFrontWheelSpeed 0x210E  
+#define LeftFrontWheelSpeedSensorInput 0x2B06   
+#define LeftFrontWheelSpeedSensorState 0x2109   
+#define RightFrontWheelSpeed 0x210F 
+#define RightFrontWheelSpeedSensorInput 0x2B07  
+#define RightFrontWheelSpeedSensorState 0x210B  
+#define LeftRearWheelSpeed 0x210D       
+#define LeftRearWheelSpeedSensorInput 0x2B08        
+#define LeftRearWheelSpeedSensorState 0x210A        
+#define RightRearWheelSpeed 0x2110  
+#define RightRearWheelSpeedSensorInput 0x2B09   
+#define RightRearWheelSpeedSensorState 0x210C   
+
+// GMRDB 2022 ABS Data Identifiers
+
+
+// FGI Falcon Specifc ABS Data 0x22 readDataByLocalId
+#define LeftFrontInletValveState
+#define LeftFrontOutletValveState
+#define LeftRearInletValveState
+#define LeftRearOutletValveState
+#define ABSPumpMotorRelay
+#define RightFrontInletValveState
+#define RightFrontOutletValveState
+#define RightRearInletValveState
+#define RightRearOutletValveState
+#define ABSRearInletValveStatus
+#define ABSRearOutletValveStatus
+#define ABSValveControlRelay
+#define ABSProcessByte
+#define ECUOperatingStates
+#define BrakeONOFF
+#define BrakeFluidLineHydraulicPressure
+#define ContinuousCodes
+#define DisableSafetySoftware
+#define HDCEnable
+#define HDCSwitchStatus
+#define Ignition
+#define ABSLateralAccelerationRate
+#define Leftfrontwheelspeedsensor
+#define Leftrearwheelspeedsensor
+#define ABSPumpMotorStatus
+#define ParkingbrakeSwitch
+#define Rightfrontwheelspeedsensor
+#define Rightrearwheelspeedsensor
+#define Steeringwheelanglesensor
+#define TCSPrimingValve1
+#define TCSPrimingValve2
+#define TCSSwitchingValve1
+#define TCSSwitchingValve2
+#define Tractioncontrolsystem
+#define TractionControlSwitchStatus
+#define ABSYawRateValue
+//ABSLF_I   DISABLE     Left Front Inlet Valve State
+//ABSLF_O DISABLE     Left Front Outlet Valve State
+//ABSLR_I DISABLE     Left Rear Inlet Valve State
+//ABSLR_O DISABLE     Left Rear Outlet Valve State
+//ABSPMPRLY   DISABLE     ABS Pump Motor Relay
+//ABSRF_I DISABLE     Right Front Inlet Valve State
+//ABSRF_O DISABLE     Right Front Outlet Valve State
+//ABSRR_I DISABLE     Right Rear Inlet Valve State
+//ABSRR_O DISABLE     Right Rear Outlet Valve State
+//ABSR_I  Off     ABS Rear Inlet Valve Status
+//ABSR_O  Off     ABS Rear Outlet Valve Status
+//ABSVLVRLY   ENABLE  ABS Valve Control Relay
+//ABS_BYTE    204     ABS Process Byte
+//ABS_STAT    Diagnostic  ECU Operating States
+//BOO_ABS Inactive    Brake ON/OFF
+//BRAKPRES    0.0 kPa Brake Fluid Line Hydraulic Pressure
+//CCNTABS 2   Continuous Codes
+//DISABLE_SS  No  Disable Safety Software
+//HDC_ENABLE  Inactive    HDC Enable
+//HDC_SW  Inactive    HDC Switch Status
+//Ignition    12.02 V Ignition
+//LAT_ACCL    0.00 G  ABS Lateral Acceleration Rate
+//LF_WSPD 2.0 km/h    Left front wheel speed sensor
+//LR_WSPD 2.0 km/h    Left rear wheel speed sensor
+//PMPSTAT Inactive    ABS Pump Motor Status
+//PRK_BRAKE   Inactive    Parking brake Switch
+//RF_WSPD 2.0 km/h    Right front wheel speed sensor
+//RR_WSPD 2.0 km/h    Right rear wheel speed sensor
+//STEER_ANGL  11.40 ° Steering wheel angle sensor
+//TCSPRI1 Inactive    TCS Priming Valve 1
+//TCSPRI2 Inactive    TCS Priming Valve 2
+//TCSSWI1 Inactive    TCS Switching Valve 1
+//TCSSWI2 Inactive    TCS Switching Valve 2
+//TCYC_FS Off     Traction control system
+//TCYC_SW Up  Traction Control Switch Status
+//YAW_RATE    0 1/min ABS Yaw Rate Value
+
+// FGII Falcon Specifc ABS Data 0x22 readDataByLocalId
+// FGX Falcon Specifc ABS Data 0x22 readDataByLocalId
+
+// FG Falcon ABS Config Options aka As Built Data block 2 line 1
+#define XTG1G2SportIRS                          10 04 01        1049601 
+#define XTSportIRS                              10 05 01        1049857 
+#define GTurbo                                  10 06 01        1050113 
+#define G6SedanDLPGXTG6G6ESport                 11 04 01        1115137 
+#define PoliceSedanDLPGXTSport                  11 05 01        1115993 
+#define UteDLPGREBXR612t                        12 04 02        1180674 
+#define F6PursultUTE12t4pot                     14 01 02        1310978 
+#define F6PursultUTE12t6pot                     14 02 02        1311234 
+#define XT                                      16 04 01        1442817 
+#define G6SedanDLPGXTStd                        17 04 01        1508953 
+#define UteI6RDLPGXL34t                         18 04 02        1573890 
+#define F6Force64potBrakes                      19 01 01        1638657 
+#define F6Force66potBrakes                      19 02 01        1638913 
+#define XR6                                     19 04 01        1639425 
+#define XR6Turbo                                19 06 01        1639937 
+#define XR6TurboPolice                          19 07 01        1640193 
+#define GTForce4pOtBrakes                       20 01 01        2097409 
+#define GTGTPForces6potBrakes                   20 02 01        2097665 
+#define XR8                                     20 06 01        2098689 
+#define XR8Police                               20 07 01        2098945 
+#define UteI67DLPG1t                            21 04 02        2163714 
+#define UteI6                                   22 04 02        2229250 
+#define G6SedanDLPGXTHDSus                      23 04 01        2294785 
+#define XTHDFrontSusandIRS                      23 04 01        229478 
+#define XTPoliceHDFrontSusandIRS                23 05 01        2295041 
